@@ -187,13 +187,25 @@ def pack_addon_container(
 
 
 def addon_input(position: int, content_dir: str, application_id: int, title_ids, tlvs) -> PackageInput:
-    title_id = (title_ids[position] if title_ids else None) or (
-        application_id + 0x1000 + position
-    )
+    """Scope index follows the console id: title - application - 0x1000
+    (DKB's dlc dump is index 1), so writer and reader derive the same
+    `addon/N/...` paths.  Without explicit ids the first add-on is index 1,
+    matching Nintendo's observed assignment."""
+    if title_ids and title_ids[position]:
+        title_id = title_ids[position]
+        scope_index = title_id - application_id - 0x1000
+        if scope_index < 0:
+            raise NupError(
+                f"add-on title id {title_id:#x} is smaller than application "
+                f"{application_id:#x} + 0x1000 (SPEC §4)"
+            )
+    else:
+        title_id = application_id + 0x1000 + position + 1
+        scope_index = position + 1
     return PackageInput(
         Kind.ADDON,
         content_dir,
-        addon_position=position,
+        addon_position=scope_index,
         title_id=title_id,
         application_id=application_id,
         tlvs=(tlvs[position] if tlvs else {}) or {},

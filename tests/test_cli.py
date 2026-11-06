@@ -69,3 +69,13 @@ def test_tlv_length_cap_error_message(base_dump, tmp_path, capsys):
                      f"--title-id={BASE_TITLE_ID:x}", f"--icon={huge_icon}"]) == 1
     captured = capsys.readouterr().err
     assert "u16" in captured and "64 KiB" in captured
+
+
+def test_s52_default_naming_uses_standalone_update():
+    """§5.2 packs (a lone update stored as a base) carry the
+    standalone.update convention, per the v1 lineage."""
+    from nup.packcli import default_name
+
+    assert default_name("x/updates/917504", "standalone", 917504, "MarioKartWorld") == (
+        "MarioKartWorld.standalone.update.917504.nup"
+    )

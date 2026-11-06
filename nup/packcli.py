@@ -19,13 +19,14 @@ def command_pack(args) -> int:
     discovery = discover_dumps(args.source)
     tlvs = collect_tlvs(args)
     title_id = parse_title_id(args.title_id)
+    application_id = parse_title_id(getattr(args, "application_id", None))
     if args.base is not None:
         return pack_update_flow(args, discovery, tlvs, title_id)
     if args.kind == "standalone":
         return pack_standalone_flow(args, discovery, tlvs, title_id)
     if discovery.mode == "content":
         return pack_single_flow(args, discovery, tlvs, title_id)
-    return pack_bundle_flow(args, discovery, tlvs, title_id, args.kind)
+    return pack_bundle_flow(args, discovery, tlvs, title_id, args.kind, application_id)
 
 
 def pack_update_flow(args, discovery, tlvs, title_id) -> int:
@@ -84,9 +85,9 @@ def pack_single_flow(args, discovery, tlvs, title_id) -> int:
     return 0
 
 
-def pack_bundle_flow(args, discovery, tlvs, title_id, kind) -> int:
+def pack_bundle_flow(args, discovery, tlvs, title_id, kind, application_id=None) -> int:
     if kind == "dlc":
-        return pack_dlc_flow(args, discovery, title_id)
+        return pack_dlc_flow(args, discovery, title_id, application_id)
     if discovery.base_dir is None:
         return pack_updates_as_base_flow(args, discovery, tlvs, title_id)
     stem = args.name
@@ -118,9 +119,10 @@ def pack_bundle_updates(args, discovery, application_id, base_out, stem) -> list
 
 
 def pack_updates_as_base_flow(args, discovery, tlvs, title_id) -> int:
+    stem = args.name or Path(args.source).resolve().name
     for version in sorted(discovery.updates):
         update_dir = discovery.updates[version]
-        out = args.out or default_name(update_dir, "base", 0)
+        out = args.out or default_name(update_dir, "standalone", version, stem)
         record = pack_base_container(
             out,
             update_dir,
@@ -135,27 +137,32 @@ def pack_updates_as_base_flow(args, discovery, tlvs, title_id) -> int:
     return 0
 
 
-def pack_dlc_flow(args, discovery, title_id) -> int:
+def pack_dlc_flow(args, discovery, addon_title_id, application_id) -> int:
     if not discovery.addons:
         raise NupError("this bundle has no dlc/ or addons/ content")
-    application_id = resolve_application_id(discovery, title_id)
+    if application_id is None and discovery.base_dir is not None:
+        application_id = derive_application_id(discovery.base_dir)
+    if application_id is None:
+        raise NupError(
+            "--application-id is required: add-on dumps are RomFS-only and "
+            "carry no npdm to derive the application id from"
+        )
     out = args.out or default_name(discovery.addons[0], "dlc", 0)
     records = pack_addon_container(
         out,
         discovery.addons,
         application_id=application_id,
-        title_ids=[title_id] if title_id else None,
+        title_ids=[addon_title_id] if addon_title_id else None,
     )
     print(f"packed {out}: {len(records)} add-on packages")
     return 0
 
 
-def resolve_application_id(discovery, title_id) -> int:
-    if title_id is not None:
-        return title_id
-    if discovery.base_dir is not None:
-        return require_title_id(discovery.base_dir, None)
-    return require_title_id(discovery.addons[0], None) - 0x1000
+def derive_application_id(content_dir: str) -> int | None:
+    from .identity import exefs_file, read_npdm_program_id
+
+    npdm = exefs_file(content_dir, "main.npdm")
+    return read_npdm_program_id(npdm) if npdm else None
 
 
 def resolve_title_id(title_id, content_dir) -> int:
@@ -236,6 +243,7 @@ def add_pack_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--chain", action="append", default=[], metavar="UPDATE_NUP",
                         help="already-packed update(s) the diff lands on, in version order")
     parser.add_argument("--title-id", help="title id, 16 hex digits")
+    parser.add_argument("--application-id", help="application id for dlc packs, 16 hex digits")
     parser.add_argument("--version", type=int, help="package version (NCM-style u32)")
     parser.add_argument("--name")
     parser.add_argument("--display-version")

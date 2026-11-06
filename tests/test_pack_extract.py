@@ -143,15 +143,15 @@ def test_addon_container_groups_all_addons(base_dump, addon_dump, tmp_path):
         str(out), [str(addon_dump), str(second)], application_id=BASE_TITLE_ID
     )
     assert [record.title_id for record in records] == [
-        BASE_TITLE_ID + 0x1000,
         BASE_TITLE_ID + 0x1001,
+        BASE_TITLE_ID + 0x1002,
     ]
     with read_container(str(out)) as reader:
         record = reader.meta.packages[0]
         assert record.kind.name == "ADDON"
         assert record.application_id == BASE_TITLE_ID
-        assert reader.entry("addon/0/romfs/level.pack.zs")
-        assert reader.entry("addon/1/romfs/two.bin")
+        assert reader.entry("addon/1/romfs/level.pack.zs")
+        assert reader.entry("addon/2/romfs/two.bin")
         from nup.verify import verify_container
 
         verify_container(reader, "full")

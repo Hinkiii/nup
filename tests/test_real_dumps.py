@@ -97,7 +97,7 @@ def test_dkb_update_dump_alone_packs_as_base(tmp_path):
     from nup.cli import main as nup_main
 
     subset = copy_subset(MKW_UPDATES, tmp_path / "mkw", 120, 50 << 20)
-    out = tmp_path / "MarioKartWorld.base.917504.nup"
+    out = tmp_path / "mkw.standalone.update.917504.nup"
     assert nup_main(["pack", str(subset), "-o", str(out), "--version=917504",
                      "--display-version=1.8.0"]) == 0
     assert nup_main(["verify", str(out), "--level=full"]) == 0
@@ -187,7 +187,7 @@ def test_mkw_full_update_dump_packs_as_base(tmp_path):
     from nup.cli import main as nup_main
 
     V2_OUT.mkdir(parents=True, exist_ok=True)
-    out = V2_OUT / "MarioKartWorld.update-as-base.917504.nup"
+    out = V2_OUT / "MarioKartWorld.standalone.update.917504.nup"
     assert nup_main(["pack", str(MKW_UPDATES), "-o", str(out), "--version=917504",
                      "--display-version=1.8.0"]) == 0
     assert nup_main(["verify", str(out), "--level=full"]) == 0

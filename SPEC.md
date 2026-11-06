@@ -205,11 +205,16 @@ addon/0/romfs/...            <- kind 2
 - File naming follows v1's `--split` convention (RECOMMENDED, not
   normative): `<name>.nup` (base), `<name>.update.<decimal version>.nup`
   (update), `<name>.dlc.nup` (add-ons), and
-  `<name>.standalone.update.<decimal version>.nup` (base + update, §5.3).
+  `<name>.standalone.update.<decimal version>.nup` - used both for a
+  lone update dump stored as a base (§5.2) and for base + update in
+  one file (§5.3); the meta tells the two shapes apart.
 - Update versions are separate files, one per version (§5), or packed
   with the base into one standalone file (§5.3). Add-ons share one
-  `dlc.nup`, told apart by scope index and title id; `application id`
-  binds everything to the base.
+  `dlc.nup`, told apart by title id; `application id` binds everything
+  to the base, and an add-on's scope index is derived from its ids:
+  `title id - application id - 0x1000` (DKB's dlc is index 1). Add-on
+  dumps are RomFS-only - they carry no `main.npdm`, so pack time needs
+  the application id and add-on title id supplied explicitly.
 - An update's `application id` MUST match the base file's title id, and
   its `base content hash` MUST match the base package's content hash
   (§5, §6.2). In a standalone container both hold by construction.
