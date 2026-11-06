@@ -140,7 +140,7 @@ def _write_extents(
                     # to raw the moment the output stops being smaller.
                     compressed = False
                     if zc is not None:
-                        co = zc.compressobj()
+                        co = zc.compressobj(fnode.size)
                         stored = 0
                         bail = False
                         left = fnode.size
