@@ -19,8 +19,8 @@ Upstream reference: [NSP.md](NSP.md).
    the metadata record. **[DECIDED]**
 2. **Hashes replace signatures**, split the way upstream splits them:
    entry hashes cover the first 0x200 bytes (like every XCI Secure
-   partition), and meta.nup carries whole-file hashes in the CNMT role.
-   **[DECIDED]**
+   partition; meta.nup excepted, see §2), and meta.nup carries
+   whole-file hashes in the CNMT role. **[DECIDED]**
 3. **No crypto.** Content is stored decrypted and verbatim. No NCA
    wrapper: no XTS header, no key areas, no CTR/BKTR. **[DECIDED]**
 4. **No compression at the container level.** Entries are raw and
@@ -50,23 +50,48 @@ offset 0x00:
   +0x00  u64  data offset     (relative to data region start)
   +0x08  u64  data size
   +0x10  u32  string table offset (name)
-  +0x14  u32  hashed size     = min(data size, 0x200)  (upstream convention)
+  +0x14  u32  hashed size     = min(data size, 0x200)  (upstream convention;
+                       meta.nup stores 0 - see below)
   +0x18  u64  reserved (zero)
   +0x20  0x20 SHA-256 of the entry's first `hashed size` bytes
 
-0x10 + 0x40*N:  string table (null-terminated UTF-8 names, NUL-terminated
-                entries packed; the table is zero-padded out to a 0x200
-                boundary)
+0x10 + 0x40*N:  string table (null-terminated UTF-8 names, first name at
+                offset 0, entries in container order, packed; the table is
+                zero-padded until the DATA REGION starts on a 0x200 file
+                boundary, and `string table size` counts the padding)
 
-data region:    entry data; every entry's offset is 0x200-aligned
+data region:    entry data; every entry's offset is a multiple of 0x200
+                relative to the data region start, which is itself
+                0x200-aligned in the file
 ```
 
 The container is the same as upstream HFS0: same header, same entry
 stride, same hash convention as an XCI Secure partition. Whole-file
 integrity lives in meta.nup (§3, §6), the job the CNMT does upstream. The
 only extra rule is that 0x200 alignment of entries is mandatory, not
-customary. Any HFS0 reader (hactool, nstool) can enumerate entries without
-knowing this format exists.
+customary. Because `0x10 + 0x40*N` is not generally 0x200-aligned, the
+string table is padded until the data region start is 0x200-aligned in the
+file, and `string table size` counts the padding - so a plain HFS0 reader
+computing `0x10 + 0x40*N + size` lands on entry data. Any HFS0 reader
+(hactool, nstool) can enumerate entries without knowing this format
+exists. **[DECIDED]**
+
+Entry order: `meta.nup` is entry 0; the remaining entries are grouped by
+package scope in package-record order (base, update, add-ons) and sorted
+within a scope by raw path bytes. A package's file table lists its scope
+in the same order, so file table row `i` is container entry
+`first entry index + i`. Zero-size entries occupy an aligned slot but no
+bytes; `hashed size` is 0 and their prefix hash is the SHA-256 of empty
+input. The alignment padding between entries is not covered by any hash
+layer. **[DECIDED]**
+
+`meta.nup` is the one entry stored with `hashed size` 0 (prefix hash =
+SHA-256 of empty input). The usual `min(size, 0x200)` reading is
+impossible: the 0x18 header hash covers the entry table, whose meta slot
+would cover the first 0x200 bytes of a record containing that same field -
+a cycle with no fixed point. Upstream HFS0 semantics treat a zero-length
+hashed region as "no hash", so generic verifiers skip meta instead of
+failing it. **[DECIDED]**
 
 Names are full paths from the package root: `/`-separated, case-sensitive,
 stored as UTF-8 bytes, no normalization. ExeFS files sit at the package
@@ -90,22 +115,29 @@ file-table hashes.
 0x018  0x20 SHA-256 of container bytes [0x0, data_region_start)
             - covers magic, entry table, string table
 0x038  u32  reserved (zero)
+0x03C  4    zero padding out to header size (reserved for a future
+            feature-flags field; see §10)
 
 then P package records, each:
   0x00  u8   kind     0 = base, 1 = update (patch), 2 = add-on
   0x01  u8   flags    bit0 = diff (incremental against base content hash;
                       MUST be set for kind=update, clear otherwise;
                       see §5)
-  0x02  u16  tlv size (extra metadata after the fixed 0x38 bytes)
+  0x02  u16  tlv size (extra metadata after the fixed 0x38 bytes; the
+                       whole TLV block must also fit this u16, i.e.
+                       64 KiB)
   0x04  u64  title id          (base / patch / addon id)
   0x0C  u64  application id    (base title id; 0 for kind=base)
   0x14  u32  version           (NCM-style u32, e.g. 0x70000 = rev 7)
   0x18  u32  file count        (entries under this package scope)
-  0x1C  u64  content hash      (see §6.2)
-  0x24  u64  base content hash (package this diff applies to; 0 if none)
+  0x1C  u64  content hash      (package identity, §6.2; stored as the
+                       first 8 bytes of the digest - see §10)
+  0x24  u64  base content hash (package this diff applies to; 0 if none;
+                       same u64 truncation)
   0x2C  u64  first entry index (entries of this scope are contiguous)
   0x34  u32  reserved (zero)
-  0x38  ..   TLVs, u16 type + u16 length + value bytes
+  0x38  ..   TLVs, u16 type + u16 length + value bytes, written in
+              ascending type order
   ..    ..   file table, `file count` entries of:
              path (NUL-terminated UTF-8, package-relative)
              u64  size
@@ -120,11 +152,9 @@ package record (P = 1). A standalone container holds two: the base
 record, then the update record (§5.3). A `dlc.nup` holds every add-on for
 the title (P >= 1, all sharing `application id`).
 
-Name, icon and publisher TLVs live only on the base record. Display
-version (0x0004) is per-package: every package with a Control NCA carries
-its own, read at pack time (base's `1.0.0`, update's `3.2.0`). That's how
-an update pack states its version on its own. Add-ons have no Control
-NCA, so `dlc.nup` metas carry no display version.
+Display version (0x0004) is per-package: every package with a Control NCA
+carries its own, read at pack time (base's `1.0.0`, update's `3.2.0`).
+Add-ons have no Control NCA, so `dlc.nup` metas carry no display version.
 
 TLV types are carried over from v1 so packers keep one code path:
 
@@ -134,12 +164,18 @@ TLV types are carried over from v1 so packers keep one code path:
 | 0x0004 | display version string (e.g. `3.2.0`) |
 | 0x0005 | title name, default language |
 | 0x0006 | publisher |
-| 0x0009 | localized title (`lang` bytes + value) |
-| 0x000A | localized icon |
+| 0x0009 | localized title (records: u8 lang length, lang bytes, u16 value length, value; repeated per language) |
+| 0x000A | localized icon (same record framing) |
 | 0x000B | build id (hex string, from ExeFS `main` NSO header) |
 | 0x000C | source dump provenance (tool, date) - optional |
 
+The localized record framing (u8 + lang + u16 + value) is carried over
+from v1 unchanged. **[DECIDED]**
+
 Editors MUST preserve unknown TLV types; readers MUST ignore them.
+Identity TLVs (name, icon, publisher, localized sets) live on the
+base record; in an update-only container (§5.2) there is no base
+record, so they sit on the update record instead.
 
 The per-package **file table** takes over the CNMT's job: one whole-file
 SHA-256 per entry. Roughly 7 MB of meta.nup for a 75K-file base, same
@@ -159,7 +195,14 @@ addon/0/romfs/...            <- kind 2
 ```
 
 - Title IDs follow the console: base `0100XXXX...000`, patch `+0x800`,
-  addon `+0x1000 + index`; stored verbatim as u64.
+  addon `+0x1000 + index`; stored verbatim as u64. Switch 2 dumps
+  need one normalization step: their NPDM ACI0 program ids live in
+  the console's `0400...` namespace (e.g. DKB's main.npdm says
+  `040074A01BF12000`) and update dumps repeat the *base* id rather
+  than a patch id. Packers therefore normalize `0400...` to `0100...`,
+  take the application id from the dump, and derive patch ids as
+  application + 0x800 (add-ons as +0x1000 + index); `--title-id`
+  overrides. **[OPEN: ratify]**
 - File naming follows v1's `--split` convention (RECOMMENDED, not
   normative): `<name>.nup` (base), `<name>.update.<decimal version>.nup`
   (update), `<name>.dlc.nup` (add-ons), and
@@ -185,8 +228,15 @@ the update scope root:
 update/458752/@deleted     LF-separated package-relative paths, UTF-8
 ```
 
-`base content hash` names the exact package the diff was computed against
-(§6.2). Applying version V to a materialized tree:
+The manifest is written sorted, one path per line with a trailing LF;
+readers tolerate blank lines. It is a real scope entry (hashed in the
+file table like any other) but is *consumed* at apply time: the
+materialized tree does not contain it, and it is excluded from the
+package's content hash (§6.2). Deleting a path the tree does not have
+is an error. **[DECIDED]**
+
+`base content hash` names the exact package state the diff was computed
+against (§6.2). Applying version V to a materialized tree:
 
 ```
 tree = apply(base, diffs...)   # overlay update files in version order,
@@ -194,8 +244,14 @@ tree = apply(base, diffs...)   # overlay update files in version order,
 ```
 
 Diffs apply in ascending `version` order, and each diff's `base content
-hash` MUST equal the content hash of the tree it lands on. Chains are
-expressible, not just base-to-latest (1.0.0 -> 2.0.0 -> 3.2.0).
+hash` MUST equal the content hash of the tree it lands on. Since an
+update's content hash is the identity of its materialized state (§6.2),
+the check is `diff.base content hash == previous record's content hash`;
+loaders SHOULD verify it against the rows they actually materialized,
+not just the two records. Chains are expressible, not just
+base-to-latest (1.0.0 -> 2.0.0 -> 3.2.0); a packer producing a chain
+diff needs the base plus every intermediate update container to rebuild
+the state the new diff lands on.
 
 Packages live in separate files (§1 rule 7), so resolution is cross-file:
 the loader binds the base `.nup`, reads its content hash from the digested
@@ -212,8 +268,8 @@ in the TLV (`3.2.0`) and its revision in the version field (0x70000), so
 the file still says which revision it really is. No update package in the
 container; to readers it's just the title at that version. If the real
 1.0.0 base shows up later, re-packing turns it into base(1.0.0) +
-diff(0x70000), as two files or as one standalone file (§5.3). That's a
-pack-time decision: hashes move, consumers re-bind. **[DECIDED]**
+diff(0x70000), as two files or as one standalone file (§5.3).
+**[DECIDED]**
 
 A raw patch (BKTR NCA data) without its base cannot be packed at all; its
 bytes only mean something layered on top of the base. A diff update whose
@@ -221,13 +277,12 @@ matching base file is absent is an error at load time.
 
 ### 5.3 Standalone containers (base + update in one file)
 
-A standalone file packs the base and one update together so the pair
-travels as one artifact. Nothing new structurally: P = 2, base record
-first, update record second; base scope entries, then update scope
-entries, contiguous as always. The update is a normal diff (flags bit0)
-whose `base content hash` matches the base record's `content hash` in the
-same file, so the loader binds both scopes and applies the diff without
-any cross-file search.
+A standalone file packs the base and one update together. Nothing new
+structurally: P = 2, base record first, update record second; base scope
+entries, then update scope entries, contiguous as always. The update is a
+normal diff (flags bit0) whose `base content hash` matches the base
+record's `content hash` in the same file, so the loader binds both scopes
+and applies the diff without any cross-file search.
 
 No flag marks this case; P = 2 with kind 0 + kind 1 already says it.
 Naming: `<name>.standalone.update.<decimal version>.nup` (RECOMMENDED),
@@ -241,30 +296,50 @@ with the update's decimal version. DLC never joins a standalone container.
 meta.nup digest          SHA-256 of the metadata record itself
   |- header hash         SHA-256 of [0, data_region_start) - entry table
   |    `- prefix hashes  per-entry SHA-256, first min(size, 0x200) bytes
+  |                      (meta.nup: hashed size 0, see §2)
   `- file tables         per-file whole-entry SHA-256, per package
 ```
 
 Each layer checks independently: the header hash catches entry-table
 corruption, prefix hashes give cheap per-entry identity, file tables catch
 data corruption anywhere, and the record digest binds it all to the
-declared package list.
+declared package list. Alignment padding between entries is outside
+every layer. `bind` additionally pins each package's file table to the
+container: scope entry names and sizes MUST match the table rows (still
+O(TOC)).
 
 ### 6.2 Content hash (package identity)
 
 ```
-content hash = SHA-256( sum of sorted file-table entries of the package:
+content hash = SHA-256( sum of sorted file rows of the package state:
                           path bytes + 0x00 + u64 size + 0x20-byte file hash )
 ```
 
-Sorted by raw path bytes. This is the value carried in `base content
-hash` for diff ancestry, and what an emulator compares after materializing
-a tree to prove the chain resolved.
+Rows sorted by raw path bytes; each row is exactly the file-table row
+encoding (path NUL-terminated, size, whole-file SHA-256).
+
+For a **base or add-on package** the package state is its own scope, so
+the content hash equals the hash of the package's stored file table.
+
+For an **update package** the package state is the tree its application
+produces: the base file table overlaid with the diff rows, minus every
+path in `@deleted`. The stored diff rows alone are not the identity;
+otherwise `base content hash` could not equal the content hash of the
+tree it lands on (§5.1) and chained diffs could not be checked. This is
+the value carried in `base content hash` for diff ancestry, and what an
+emulator compares after materializing a tree to prove the chain
+resolved. **[DECIDED - the only self-consistent reading]**
+
+The full 0x20-byte digest exists in this computation only. The record
+fields store its first 8 bytes, little-endian (§3 field list). A wider
+field is an open layout question (§10); 64-bit identity is adequate for
+ancestry binding inside one title's containers.
 
 ### 6.3 Verification levels
 
 | level | checks | cost |
 |---|---|---|
-| bind | meta digest + header hash | O(TOC) |
+| bind | meta digest + header hash + file-table/entry pinning | O(TOC) |
 | package | + file-table hashes of one package scope | per package |
 | full | + hash every byte of every entry | whole file |
 | lazy | bind, then file-table hash on each read | amortized |
@@ -293,10 +368,10 @@ DonkeyKongBananza.nup               (75,243 entries)
   [0]            meta.nup           name/icon TLVs, content hash C1
   [1..75,242]    base/...
 
-DonkeyKongBananza.update.458752.nup (3,452 entries)
+DonkeyKongBananza.update.458752.nup (3,457 entries)
   [0]            meta.nup           base content hash = C1
-  [1..3,451]     update/458752/...  2,145 added + 1,306 changed (diff)
-                 .../@deleted       (41 paths)
+  [1..3,455]     update/458752/...  2,145 added + 1,310 changed (diff)
+  [3,456]        .../@deleted       (41 paths)
 
 DonkeyKongBananza.dlc.nup
   [0]            meta.nup
@@ -306,18 +381,19 @@ DonkeyKongBananza.dlc.nup
 The same content, packed as one standalone file:
 
 ```
-DonkeyKongBananza.standalone.update.458752.nup
+DonkeyKongBananza.standalone.update.458752.nup (78,699 entries)
   [0]            meta.nup           P = 2: base (C1) + diff against C1
   [1..75,242]    base/...
-  [75,243..]     update/458752/...  2,145 added + 1,306 changed + @deleted
+  [75,243..78,698] update/458752/... 2,145 added + 1,310 changed + @deleted
 ```
 
 Per-entry bytes are the same in both layouts; only the container and its
 meta differ.
 
-Numbers from the real v1 pack this is modeled on: base 75,242 files,
-update 77,346 with 1,310 changed and 41 removed. The diff package stores
-those 3,451 files instead of re-storing 77K.
+Numbers measured on the real pack of these dumps: base 75,242 files,
+update 77,346 with 1,310 changed, 2,145 added and 41 removed. The diff
+package stores those 3,455 files plus the 41-path manifest instead of
+re-storing 77K.
 
 Packing that update dump alone emits one base container, display version
 `3.2.0`, version 0x70000, no update package anywhere (§5.2).
@@ -341,11 +417,40 @@ Packing that update dump alone emits one base container, display version
    meta TLV. Rejected for v2.0 to keep tools working.
 2. **SHA-3-256 second hash.** Switch 14.0.0+ moved to SHA-3 upstream.
    Worth a meta TLV carrying an optional parallel hash?
-3. **Icon size cap.** TLV length is u16 (64 KiB). Console nacp icons
-   (0x200 x N languages) fit; confirm no dump ships bigger.
+3. **Icon size cap.** The per-TLV length and the per-record `tlv size`
+   field are both u16, so a package's whole TLV block must fit 64 KiB.
+   Console nacp icons (0x200 x N languages) plus names/publisher fit
+   with room to spare; confirm no dump ships bigger, or the `tlv size`
+   field has to widen (a layout change). Packagers SHOULD error loudly
+   on overflow, not truncate.
 4. **Windows path hazards.** Names are case-sensitive bytes, so two
    case-variant paths collide on case-insensitive filesystems. v1 had the
    same issue; carry over the policy.
+5. **Content hash width (needs sign-off).** §3 stores `u64` identity
+   fields; §6.2 computes a SHA-256. v2.0 as implemented stores the
+   first 8 bytes of the digest. Widening both fields to 0x20 bytes
+   would grow the fixed record from 0x38 to 0x58 bytes - trivial
+   against a multi-MB file table - and remove the 64-bit collision
+   ceiling, at the cost of breaking the (only just frozen) layout.
+   Decide before any v2.0 container ships. **[OPEN]**
+6. **meta header padding at 0x3C (needs sign-off).** The listed §3
+   fields end at 0x3C while header size is 0x40. v2.0 writes four zero
+   bytes there. They could instead become a u32 feature-flags field
+   (compression variant, SHA-3 TLV presence, ...). Free layout space;
+   decide before v2.0 ships. **[OPEN]**
+7. **meta.nup prefix-hash cycle (needs sign-off on the fix).** The
+   obvious `min(size, 0x200)` chain has no fixed point (§2). The
+   reference implementation stores meta.nup with `hashed size` 0. The
+   alternative - hashing meta's prefix with the 0x18 header-hash field
+   zeroed - keeps `min(size, 0x200)` literal but requires every
+   verifier to know the carve-out and breaks generic HFS0 verification
+   of that entry. Pick one before v2.0 ships. **[OPEN]**
+8. **Switch 2 title id normalization (needs sign-off).** §4 now
+   documents `0400...` -> `0100...` normalization and patch-id
+   derivation, because real S2 dumps carry neither the console-facing
+   id nor a distinct patch id inside the NPDM. The alternative is
+   storing raw ACI0 ids, which would not match emulator title
+   libraries. **[OPEN]**
 
 ---
 

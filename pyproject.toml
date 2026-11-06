@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nup"
+version = "2.0.0"
+description = "NUP v2: pack, modify, extract, inspect and verify decrypted NX dump packages"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+[project.scripts]
+nup = "nup.cli:main"
+
+[tool.setuptools]
+packages = ["nup"]
+
+[tool.setuptools.package-data]
+nup = ["py.typed"]
+
+[tool.pytest.ini_options]
+markers = [
+    "real: tests that read the full game dumps (minutes, gigabytes)",
+]

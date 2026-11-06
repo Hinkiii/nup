@@ -1,0 +1,71 @@
+"""CLI surface: exit codes, info output, and argument handling."""
+
+import json
+
+import pytest
+
+from conftest import BASE_TITLE_ID
+from nup.cli import main as nup_main
+
+
+def test_info_json_matches_human_fields(base_nup, capsys):
+    assert nup_main(["info", str(base_nup), "--json"]) == 0
+    info = json.loads(capsys.readouterr().out)
+    assert info["entry_count"] == 8
+    assert info["meta"]["package_count"] == 1
+    package = info["packages"][0]
+    assert package["kind"] == "base"
+    assert package["title_id"] == f"{BASE_TITLE_ID:016x}"
+    assert package["name"] == "Test Title"
+    assert package["display_version"] == "1.0.0"
+    assert nup_main(["info", str(base_nup)]) == 0
+    human = capsys.readouterr().out
+    assert "Test Title" in human
+
+
+def test_info_entry_listing(base_nup, capsys):
+    assert nup_main(["info", str(base_nup), "--json", "--entries"]) == 0
+    info = json.loads(capsys.readouterr().out)
+    names = [entry["name"] for entry in info["entries"]]
+    assert names[0] == "meta.nup"
+    assert "base/exefs/main" in names
+
+
+def test_verify_levels_exit_zero(base_nup, capsys):
+    for level in ("bind", "package", "full"):
+        assert nup_main(["verify", str(base_nup), f"--level={level}"]) == 0
+        assert f"{level} verification passed" in capsys.readouterr().out
+
+
+def test_bad_container_exits_nonzero_with_message(tmp_path, capsys):
+    garbage = tmp_path / "garbage.nup"
+    garbage.write_bytes(b"not a nup file at all")
+    assert nup_main(["info", str(garbage)]) == 1
+    assert "container magic" in capsys.readouterr().err
+
+
+def test_pack_requires_recognizable_layout(tmp_path, capsys):
+    empty = tmp_path / "nowhere"
+    empty.mkdir()
+    assert nup_main(["pack", str(empty)]) == 1
+    assert "neither a content directory" in capsys.readouterr().err
+
+
+def test_version_and_help_do_not_crash(capsys):
+    with pytest.raises(SystemExit) as version:
+        nup_main(["--version"])
+    assert version.value.code == 0
+    with pytest.raises(SystemExit) as usage:
+        nup_main([])
+    assert usage.value.code == 2
+
+
+def test_tlv_length_cap_error_message(base_dump, tmp_path, capsys):
+    from nup.layout import TLV_MAX_LENGTH
+
+    huge_icon = tmp_path / "icon.bin"
+    huge_icon.write_bytes(b"\0" * (TLV_MAX_LENGTH + 1))
+    assert nup_main(["pack", str(base_dump), "-o", str(tmp_path / "x.nup"),
+                     f"--title-id={BASE_TITLE_ID:x}", f"--icon={huge_icon}"]) == 1
+    captured = capsys.readouterr().err
+    assert "u16" in captured and "64 KiB" in captured

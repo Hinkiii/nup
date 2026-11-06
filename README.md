@@ -24,7 +24,30 @@ Extra things that will exist in v2:
 
 ## Status
 
-Designing.
+Designing.  A reference implementation lives in `nup/`.
+
+## Tool
+
+```sh
+pip install .            # provides the `nup` command
+
+nup pack DKB-base -o DonkeyKongBananza.nup --name "Donkey Kong Bananza" \
+    --display-version 1.0.0
+nup pack DKB-update --base DonkeyKongBananza.nup \
+    -o DonkeyKongBananza.update.458752.nup --version 458752 --display-version 3.2.0
+nup info  DonkeyKongBananza.nup [--json] [--entries]
+nup verify DonkeyKongBananza.nup --level bind|package|full
+nup extract DonkeyKongBananza.update.458752.nup --base DonkeyKongBananza.nup \
+    --apply -o game-tree/
+nup edit  game.nup --set-tlv name=Renamed --add-file base/romfs/x.bin=./x.bin
+```
+
+`pack` accepts a content directory (`exefs/` + `romfs/`), a dump bundle
+(`base/`, `updates/<version>/`, `dlc/`), or an update-only dump, which is
+stored as a base (SPEC §5.2).  `--kind standalone` packs base + one update
+together (§5.3); `--chain` packs a diff against already-packed updates (§5.1
+chains).  Tests: `python3 -m pytest` (synthetic + real-dump subsets);
+`pytest -m real` packs the full dumps.
 
 ## v1
 
