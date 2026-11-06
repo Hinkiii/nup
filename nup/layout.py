@@ -23,8 +23,9 @@ PREFIX_HASH_SIZE = ALIGN
 META_NAME = "meta.nup"
 META_MAGIC = b"NUP\x02"
 META_HEADER_SIZE = 0x40
-PACKAGE_FIXED_SIZE = 0x38
+PACKAGE_FIXED_SIZE = 0x68
 DIGEST_SIZE = 0x20
+ZERO_DIGEST = bytes(DIGEST_SIZE)
 
 DELETED_NAME = "@deleted"
 ARTIFACT_SUFFIXES = (".listing",)
@@ -75,11 +76,11 @@ TLV_MAX_LENGTH = 0xFFFF
 
 CONTAINER_HEADER = struct.Struct("<4sIII")
 CONTAINER_ENTRY = struct.Struct("<QQIIQ32s")
-META_HEADER = struct.Struct("<4sHHIIQ32sI")
-PACKAGE_RECORD = struct.Struct("<BBHQQIIQQQI")
+META_HEADER = struct.Struct("<4sHHIIQ32sII")
+PACKAGE_RECORD = struct.Struct("<BBHQQII32s32sQI")
 assert CONTAINER_HEADER.size == HEADER_SIZE
 assert CONTAINER_ENTRY.size == ENTRY_SIZE
-assert META_HEADER.size == META_HEADER_SIZE - 4
+assert META_HEADER.size == META_HEADER_SIZE
 assert PACKAGE_RECORD.size == PACKAGE_FIXED_SIZE
 
 U64 = struct.Struct("<Q")
@@ -95,17 +96,16 @@ SPEC_ISSUES: dict[str, str] = {
         "boundary; string table size is stored padded."
     ),
     "meta-header-size": (
-        "SPEC §3's listed meta fields end at 0x3C but the header size field "
-        "is documented as '0x40 in v2.0'.  Resolution: writers emit 0x40 and "
-        "zero bytes [0x3C, 0x40); readers accept header_size >= 0x3C and "
-        "start package records at header_size."
+        "The draft §3 listed meta fields ending at 0x3C against a 0x40 "
+        "header size.  Ratified 2026-11-06: byte 0x3C is a u32 feature-flags "
+        "field (zero in v2.0, unknown bits rejected); readers require "
+        "header_size >= 0x40 and start package records at header_size."
     ),
     "content-hash-width": (
-        "SPEC §6.2 defines the content hash as a SHA-256 digest but §3 gives "
-        "the record fields only u64 slots ('0x1C u64 content hash').  "
-        "Resolution: the record carries the first 8 bytes of the digest, "
-        "little-endian (truncated_digest); the 256-bit digest exists only in "
-        "the content-hash computation."
+        "The draft §3 gave the identity fields u64 slots while §6.2 "
+        "computes a SHA-256.  Ratified 2026-11-06: the fields carry the "
+        "full 0x20-byte digest (fixed record part 0x38 -> 0x68); a base "
+        "package's base content hash field is all zero."
     ),
     "update-content-hash": (
         "SPEC §5.1 requires a diff's base content hash to equal the content "
@@ -138,19 +138,13 @@ SPEC_ISSUES: dict[str, str] = {
         "§8 now carries the measured numbers."
     ),
     "switch2-title-id-namespace": (
-        "SPEC §4 assumes dump title ids follow the console's 0100… "
-        "convention, but Switch 2 NPDMs carry program ids in the 0400… "
-        "namespace and update dumps carry the base application id in their "
-        "ACI0 (no patch id anywhere).  Resolution: packers normalize 0400… "
-        "to 0100… and derive patch/addon ids from the application id by "
-        "the console's +0x800/+0x1000+index convention."
+        "Switch 2 NPDMs carry program ids in the 0400… namespace and update "
+        "dumps repeat the base application id in their ACI0 (no patch id "
+        "anywhere).  Ratified 2026-11-06: packers normalize 0400… to 0100… "
+        "and derive patch/addon ids from the application id by the "
+        "console's +0x800/+0x1000+index convention; --title-id overrides."
     ),
 }
-
-
-def truncated_digest(digest: bytes) -> int:
-    """Content-hash identity as stored in a package record (SPEC_ISSUES)."""
-    return int.from_bytes(digest[:8], "little")
 
 
 def content_hash(rows: "list[FileRow]") -> bytes:

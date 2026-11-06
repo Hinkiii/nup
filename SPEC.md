@@ -115,29 +115,28 @@ file-table hashes.
 0x018  0x20 SHA-256 of container bytes [0x0, data_region_start)
             - covers magic, entry table, string table
 0x038  u32  reserved (zero)
-0x03C  4    zero padding out to header size (reserved for a future
-            feature-flags field; see §10)
+0x03C  u32  feature flags (zero in v2.0; readers MUST reject unknown
+            bits - bit allocation happens when a feature needs one)
 
-then P package records, each:
-  0x00  u8   kind     0 = base, 1 = update (patch), 2 = add-on
-  0x01  u8   flags    bit0 = diff (incremental against base content hash;
-                      MUST be set for kind=update, clear otherwise;
-                      see §5)
-  0x02  u16  tlv size (extra metadata after the fixed 0x38 bytes; the
-                       whole TLV block must also fit this u16, i.e.
-                       64 KiB)
-  0x04  u64  title id          (base / patch / addon id)
-  0x0C  u64  application id    (base title id; 0 for kind=base)
-  0x14  u32  version           (NCM-style u32, e.g. 0x70000 = rev 7)
-  0x18  u32  file count        (entries under this package scope)
-  0x1C  u64  content hash      (package identity, §6.2; stored as the
-                       first 8 bytes of the digest - see §10)
-  0x24  u64  base content hash (package this diff applies to; 0 if none;
-                       same u64 truncation)
-  0x2C  u64  first entry index (entries of this scope are contiguous)
-  0x34  u32  reserved (zero)
-  0x38  ..   TLVs, u16 type + u16 length + value bytes, written in
-              ascending type order
+then P package records, fixed part 0x68 bytes:
+  0x00  u8    kind     0 = base, 1 = update (patch), 2 = add-on
+  0x01  u8    flags    bit0 = diff (incremental against base content hash;
+                        MUST be set for kind=update, clear otherwise;
+                        see §5)
+  0x02  u16   tlv size (extra metadata after the fixed 0x68 bytes; the
+                        whole TLV block must also fit this u16, i.e.
+                        64 KiB)
+  0x04  u64   title id          (base / patch / addon id)
+  0x0C  u64   application id    (base title id; 0 for kind=base)
+  0x14  u32   version           (NCM-style u32, e.g. 0x70000 = rev 7)
+  0x18  u32   file count        (entries under this package scope)
+  0x1C  0x20  content hash      (package identity, §6.2)
+  0x3C  0x20  base content hash (package state this diff applies to;
+                        all zero if none)
+  0x5C  u64   first entry index (entries of this scope are contiguous)
+  0x64  u32   reserved (zero)
+  0x68  ..    TLVs, u16 type + u16 length + value bytes, written in
+               ascending type order
   ..    ..   file table, `file count` entries of:
              path (NUL-terminated UTF-8, package-relative)
              u64  size
@@ -202,7 +201,7 @@ addon/0/romfs/...            <- kind 2
   than a patch id. Packers therefore normalize `0400...` to `0100...`,
   take the application id from the dump, and derive patch ids as
   application + 0x800 (add-ons as +0x1000 + index); `--title-id`
-  overrides. **[OPEN: ratify]**
+  overrides. **[DECIDED]**
 - File naming follows v1's `--split` convention (RECOMMENDED, not
   normative): `<name>.nup` (base), `<name>.update.<decimal version>.nup`
   (update), `<name>.dlc.nup` (add-ons), and
@@ -330,10 +329,8 @@ the value carried in `base content hash` for diff ancestry, and what an
 emulator compares after materializing a tree to prove the chain
 resolved. **[DECIDED - the only self-consistent reading]**
 
-The full 0x20-byte digest exists in this computation only. The record
-fields store its first 8 bytes, little-endian (§3 field list). A wider
-field is an open layout question (§10); 64-bit identity is adequate for
-ancestry binding inside one title's containers.
+The 0x20-byte digest is exactly what both identity fields in the record
+carry (§3); a base package's `base content hash` field is all zero.
 
 ### 6.3 Verification levels
 
@@ -426,31 +423,22 @@ Packing that update dump alone emits one base container, display version
 4. **Windows path hazards.** Names are case-sensitive bytes, so two
    case-variant paths collide on case-insensitive filesystems. v1 had the
    same issue; carry over the policy.
-5. **Content hash width (needs sign-off).** §3 stores `u64` identity
-   fields; §6.2 computes a SHA-256. v2.0 as implemented stores the
-   first 8 bytes of the digest. Widening both fields to 0x20 bytes
-   would grow the fixed record from 0x38 to 0x58 bytes - trivial
-   against a multi-MB file table - and remove the 64-bit collision
-   ceiling, at the cost of breaking the (only just frozen) layout.
-   Decide before any v2.0 container ships. **[OPEN]**
-6. **meta header padding at 0x3C (needs sign-off).** The listed §3
-   fields end at 0x3C while header size is 0x40. v2.0 writes four zero
-   bytes there. They could instead become a u32 feature-flags field
-   (compression variant, SHA-3 TLV presence, ...). Free layout space;
-   decide before v2.0 ships. **[OPEN]**
-7. **meta.nup prefix-hash cycle (needs sign-off on the fix).** The
-   obvious `min(size, 0x200)` chain has no fixed point (§2). The
-   reference implementation stores meta.nup with `hashed size` 0. The
-   alternative - hashing meta's prefix with the 0x18 header-hash field
-   zeroed - keeps `min(size, 0x200)` literal but requires every
-   verifier to know the carve-out and breaks generic HFS0 verification
-   of that entry. Pick one before v2.0 ships. **[OPEN]**
-8. **Switch 2 title id normalization (needs sign-off).** §4 now
-   documents `0400...` -> `0100...` normalization and patch-id
-   derivation, because real S2 dumps carry neither the console-facing
-   id nor a distinct patch id inside the NPDM. The alternative is
-   storing raw ACI0 ids, which would not match emulator title
-   libraries. **[OPEN]**
+5. **Content hash width - RATIFIED 2026-11-06.** The record carries the
+   full 0x20-byte digest in both identity fields (§3); the fixed
+   record part grows 0x38 -> 0x68 bytes, trivial against a multi-MB
+   file table, and the 64-bit collision ceiling is gone.
+6. **meta header 0x3C field - RATIFIED 2026-11-06.** It is now a u32
+   feature-flags field (§3), zero in v2.0; bits get allocated when a
+   feature (compression variant, SHA-3 TLV) needs one, and readers
+   MUST reject unknown bits.
+7. **meta.nup prefix-hash cycle - RATIFIED 2026-11-06.** meta.nup
+   stores `hashed size` 0 (§2). The zero-out-the-header-hash
+   alternative is rejected: every verifier would need the carve-out,
+   and generic HFS0 verification of the entry would break.
+8. **Switch 2 title id normalization - RATIFIED 2026-11-06.** Packers
+   normalize `0400...` -> `0100...` and derive patch/add-on ids from
+   the application id (§4); raw ACI0 ids would not match emulator
+   title libraries.
 
 ---
 

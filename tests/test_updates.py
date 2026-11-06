@@ -1,7 +1,7 @@
 """Update model: diffs, @deleted manifests, chains, standalone containers."""
 
 from conftest import BASE_TITLE_ID, pack_base, pack_update, tree_of
-from nup.layout import Kind, content_hash, truncated_digest
+from nup.layout import Kind, content_hash
 from nup.reader import read_container
 from nup.tree import parse_deleted_manifest
 
@@ -187,8 +187,8 @@ def test_update_content_hash_is_materialized_identity_not_table_hash(
         for path in parse_deleted_manifest_data(reader, record):
             merged.pop(path, None)
         materialized_digest = content_hash(sorted(merged.values(), key=lambda r: r.path_bytes))
-    assert truncated_digest(materialized_digest) == record.content_hash
-    assert truncated_digest(table_digest) != record.content_hash
+    assert materialized_digest == record.content_hash
+    assert table_digest != record.content_hash
 
 
 def parse_deleted_manifest_data(reader, record):

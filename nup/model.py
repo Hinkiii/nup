@@ -17,7 +17,7 @@ from .layout import (
     Kind,
     scope_prefix,
 )
-from .layout import FileRow, align_up, content_hash, truncated_digest
+from .layout import FileRow, ZERO_DIGEST, align_up, content_hash
 
 
 @dataclass(slots=True)
@@ -37,8 +37,8 @@ class PackageRecord:
     application_id: int
     version: int
     first_entry_index: int
-    content_hash: int = 0
-    base_content_hash: int = 0
+    content_hash: bytes = ZERO_DIGEST
+    base_content_hash: bytes = ZERO_DIGEST
     tlvs: dict[int, bytes] = field(default_factory=dict)
     files: list[FileRow] = field(default_factory=list)
 
@@ -50,7 +50,7 @@ class PackageRecord:
         return content_hash(self.files)
 
     def store_content_hash(self) -> None:
-        self.content_hash = truncated_digest(self.content_digest())
+        self.content_hash = self.content_digest()
 
 
 @dataclass(slots=True)
@@ -58,6 +58,7 @@ class MetaRecord:
     patch_version: int
     header_hash: bytes
     packages: list[PackageRecord] = field(default_factory=list)
+    feature_flags: int = 0
 
     def package_of_entry(self, index: int) -> PackageRecord:
         for record in self.packages:

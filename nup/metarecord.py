@@ -41,8 +41,8 @@ def encode_meta_record(meta: MetaRecord, total_file_count: int) -> bytes:
         total_file_count,
         meta.header_hash,
         0,
+        meta.feature_flags,
     )
-    out += b"\x00" * 4
     for record in meta.packages:
         out += encode_package_record(record)
     digest = hashlib.sha256(out).digest()
@@ -51,6 +51,12 @@ def encode_meta_record(meta: MetaRecord, total_file_count: int) -> bytes:
 
 
 def encode_package_record(record: PackageRecord) -> bytes:
+    for field_name, digest in (("content hash", record.content_hash),
+                               ("base content hash", record.base_content_hash)):
+        if len(digest) != DIGEST_SIZE:
+            raise NupError(
+                f"{field_name} must be a {DIGEST_SIZE}-byte digest, got {len(digest)} bytes"
+            )
     out = bytearray()
     out += PACKAGE_RECORD.pack(
         record.kind.value,
@@ -97,7 +103,8 @@ def parse_meta_record(record: memoryview) -> MetaRecord:
             f"meta file count {header['file_count']} disagrees with package tables ({declared})"
         )
     validate_scope_contiguity(packages)
-    return MetaRecord(header["patch_version"], header["header_hash"], packages)
+    return MetaRecord(header["patch_version"], header["header_hash"], packages,
+                      header["feature_flags"])
 
 
 def split_digest(record: memoryview) -> tuple[memoryview, bytes]:
@@ -111,21 +118,27 @@ def split_digest(record: memoryview) -> tuple[memoryview, bytes]:
 
 
 def parse_meta_header(body: memoryview) -> dict:
-    magic, header_size, patch_version, package_count, reserved, file_count, header_hash, meta_reserved = (
+    magic, header_size, patch_version, package_count, reserved, file_count, header_hash, meta_reserved, feature_flags = (
         META_HEADER.unpack_from(body)
     )
     if magic != META_MAGIC:
         raise NupError(f"bad meta magic {magic!r}")
-    if header_size < META_HEADER_SIZE - 4 or header_size > len(body):
+    if header_size < META_HEADER_SIZE or header_size > len(body):
         raise NupError(f"implausible meta header size {header_size:#x}")
     if reserved != 0 or meta_reserved != 0:
         raise NupError("meta header reserved field is not zero")
+    if feature_flags:
+        raise NupError(
+            f"unknown feature flags {feature_flags:#x} set; this build reads "
+            "v2.0 containers only (flags field, SPEC §3)"
+        )
     return {
         "header_size": header_size,
         "patch_version": patch_version,
         "package_count": package_count,
         "file_count": file_count,
         "header_hash": header_hash,
+        "feature_flags": feature_flags,
     }
 
 

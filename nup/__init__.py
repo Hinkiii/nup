@@ -5,7 +5,7 @@ carries versioning, grouping and integrity.  See SPEC.md for the format.
 """
 
 from .errors import NupError, VerificationError
-from .layout import Kind, Flags, TlvType, SPEC_ISSUES, truncated_digest
+from .layout import Kind, Flags, TlvType, SPEC_ISSUES, ZERO_DIGEST
 
 __all__ = [
     "NupError",
@@ -14,7 +14,7 @@ __all__ = [
     "Flags",
     "TlvType",
     "SPEC_ISSUES",
-    "truncated_digest",
+    "ZERO_DIGEST",
 ]
 
 __version__ = "2.0.0"

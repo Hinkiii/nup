@@ -7,7 +7,7 @@ base table and the @deleted manifest (see SPEC_ISSUES
 ['update-content-hash']).
 """
 
-from .layout import DELETED_NAME, FileRow, Kind, content_hash, truncated_digest
+from .layout import DELETED_NAME, FileRow, Kind, content_hash
 from .model import PackageRecord
 from .reader import NupReader
 from .tree import parse_deleted_manifest
@@ -74,10 +74,8 @@ def deleted_paths(reader: NupReader, record: PackageRecord) -> list[str]:
     return []
 
 
-def sorted_identity(rows) -> int:
-    return truncated_digest(
-        content_hash(sorted(rows, key=lambda row: row.path_bytes))
-    )
+def sorted_identity(rows) -> bytes:
+    return content_hash(sorted(rows, key=lambda row: row.path_bytes))
 
 
 def renumber(records: list[PackageRecord]) -> None:

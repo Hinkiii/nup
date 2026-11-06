@@ -20,7 +20,6 @@ from .layout import (
     TlvType,
     content_hash,
     scope_prefix,
-    truncated_digest,
 )
 from .model import PackageRecord
 from .reader import NupReader, read_container
@@ -89,8 +88,8 @@ def base_rows_of(record: PackageRecord) -> dict[str, FileRow]:
     return {row.path: row for row in record.files}
 
 
-def sorted_identity(rows) -> int:
-    return truncated_digest(content_hash(sorted(rows, key=lambda row: row.path_bytes)))
+def sorted_identity(rows) -> bytes:
+    return content_hash(sorted(rows, key=lambda row: row.path_bytes))
 
 
 def pack_tree_package(
@@ -181,8 +180,8 @@ def apply_chain_link(rows: dict[str, FileRow], identity: int, path: str):
         record = require_chain_update(reader, path)
         if record.base_content_hash != identity:
             raise NupError(
-                f"{path!r} binds to {record.base_content_hash:#x} but the "
-                f"chained tree is {identity:#x}"
+                f"{path!r} binds to {record.base_content_hash.hex()} but the "
+                f"chained tree is {identity.hex()}"
             )
         overlay_update_rows(reader, record, rows)
         return rows, sorted_identity(rows.values())

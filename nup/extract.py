@@ -17,7 +17,6 @@ from .layout import (
     Kind,
     content_hash,
     scope_prefix,
-    truncated_digest,
 )
 from .model import addon_index
 from .reader import NupReader
@@ -163,8 +162,8 @@ def apply_updates(reader: NupReader, updates, state: State, report: ExtractRepor
         if record.base_content_hash != identity_of(state):
             raise NupError(
                 f"update v{record.version} binds to base content hash "
-                f"{record.base_content_hash:#x} but the materialized tree is "
-                f"{identity_of(state):#x}"
+                f"{record.base_content_hash.hex()} but the materialized tree is "
+                f"{identity_of(state).hex()}"
             )
         for offset, row in enumerate(record.files):
             if row.path == DELETED_NAME:
@@ -184,7 +183,7 @@ def apply_updates(reader: NupReader, updates, state: State, report: ExtractRepor
 
 def identity_of(state: State) -> int:
     rows = [state[path][0] for path in sorted(state)]
-    return truncated_digest(content_hash(rows))
+    return content_hash(rows)
 
 
 def write_state(state: State, out_dir: str, verify: bool, report: ExtractReport) -> None:

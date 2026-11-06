@@ -51,8 +51,8 @@ def package_info(reader: NupReader, record) -> dict:
         "is_diff": record.is_diff,
         "first_entry_index": record.first_entry_index,
         "file_count": len(record.files),
-        "content_hash": f"{record.content_hash:016x}",
-        "base_content_hash": f"{record.base_content_hash:016x}",
+        "content_hash": record.content_hash.hex(),
+        "base_content_hash": render_base_hash(record),
         "tlv_types": sorted(record.tlvs),
         "localized_languages": sorted(
             parse_localized(record.tlvs[TlvType.LOCALIZED_TITLE])
@@ -63,6 +63,12 @@ def package_info(reader: NupReader, record) -> dict:
     if icon is not None:
         payload["icon_bytes"] = len(icon)
     return payload
+
+
+def render_base_hash(record) -> str:
+    from .layout import ZERO_DIGEST
+
+    return "none" if record.base_content_hash == ZERO_DIGEST else record.base_content_hash.hex()
 
 
 def decode_text(tlvs: dict[int, bytes], tlv_type: int) -> str | None:

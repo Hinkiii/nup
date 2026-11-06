@@ -61,10 +61,10 @@ def test_add_replace_remove_files(base_nup, tmp_path):
 
 
 def verify_content_hash(reader, index):
-    from nup.layout import content_hash, truncated_digest
+    from nup.layout import content_hash
 
     record = reader.meta.packages[index]
-    assert record.content_hash == truncated_digest(content_hash(record.files))
+    assert record.content_hash == content_hash(record.files)
 
 
 def test_replace_file_rehashes_entry(base_nup, tmp_path):

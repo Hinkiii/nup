@@ -15,6 +15,7 @@ from nup.layout import (
     META_HEADER_SIZE,
     PACKAGE_FIXED_SIZE,
     PACKAGE_RECORD,
+    ZERO_DIGEST,
     FileRow,
     SPEC_ISSUES,
     TlvType,
@@ -26,7 +27,6 @@ from nup.layout import (
     parse_localized,
     parse_tlvs,
     scope_prefix,
-    truncated_digest,
 )
 from nup.layout import Kind
 
@@ -34,13 +34,14 @@ from nup.layout import Kind
 def test_struct_widths_match_the_documented_layout():
     assert CONTAINER_HEADER.size == HEADER_SIZE
     assert CONTAINER_ENTRY.size == ENTRY_SIZE
-    assert META_HEADER.size == META_HEADER_SIZE - 4
+    assert META_HEADER.size == META_HEADER_SIZE
     assert PACKAGE_RECORD.size == PACKAGE_FIXED_SIZE
 
 
-def test_package_record_fixed_part_is_0x38_bytes_ending_before_tlvs():
-    layout = "<BBHQQIIQQQI"
+def test_package_record_fixed_part_is_0x68_bytes_ending_before_tlvs():
+    layout = "<BBHQQII32s32sQI"
     assert PACKAGE_RECORD.format == layout
+    assert PACKAGE_FIXED_SIZE == 0x68
 
 
 def test_tlv_roundtrip():
@@ -83,11 +84,10 @@ def test_content_hash_digest_binds_path_size_and_data():
     assert content_hash([row]) == expected
 
 
-def test_content_hash_is_256_bit_but_records_store_u64(spec_issue):
+def test_records_store_the_full_digest(spec_issue):
     digest = content_hash([FileRow("a", 0, b"\x00" * 32)])
     assert len(digest) == 32
-    stored = truncated_digest(digest)
-    assert stored == int.from_bytes(digest[:8], "little")
+    assert ZERO_DIGEST == bytes(32)
     assert spec_issue("content-hash-width") is not None
 
 

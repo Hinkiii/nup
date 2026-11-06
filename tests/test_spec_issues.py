@@ -46,16 +46,15 @@ def test_issue_meta_header_size_vs_field_list(base_nup):
 
 
 def test_issue_content_hash_width(base_nup):
-    """SPEC §6.2 defines a SHA-256 content hash, but §3 gives it a u64 slot.
-    Resolution: store digest[:8] little-endian; 256 bits exist only during
-    computation."""
-    from nup.layout import content_hash, truncated_digest
+    """RATIFIED: the record fields carry the full 0x20-byte digest; the
+    draft's u64 truncation is gone (fixed record part 0x38 -> 0x68)."""
+    from nup.layout import content_hash
 
     with read_container(str(base_nup)) as reader:
         record = reader.meta.packages[0]
-        full = content_hash(record.files)
-        assert record.content_hash == int.from_bytes(full[:8], "little")
-        assert truncated_digest(full) == record.content_hash
+        assert len(record.content_hash) == 32
+        assert record.content_hash == content_hash(record.files)
+        assert record.base_content_hash == bytes(32)
 
 
 def test_issue_meta_prefix_hash_cycle(base_nup):
@@ -146,8 +145,7 @@ def test_two_package_containers_must_be_base_plus_update(base_dump, tmp_path):
 
 def test_addon_containers_hold_any_number_of_addons():
     """SPEC §3: a dlc.nup holds every add-on for the title (P >= 1)."""
-    from nup.layout import Kind
-    from nup.model import PackageRecord, validate_grouping
+    from nup.model import validate_grouping
 
     validate_grouping(addon_records(2))
     validate_grouping(addon_records(5))

@@ -114,3 +114,15 @@ def test_verify_report_counts(base_nup):
     with read_container(str(base_nup)) as reader:
         assert report.entries_hashed == len(reader.meta.packages[0].files)
     assert report.bytes_hashed > 0
+
+
+def test_unknown_feature_flags_are_rejected(base_nup):
+    """The 0x3C feature-flags field is zero in v2.0; unknown bits fail closed."""
+    with read_container(str(base_nup)) as reader:
+        meta_offset = reader.data_start + reader.entries[0].data_offset
+    data = bytearray(base_nup.read_bytes())
+    data[meta_offset + 0x3C] = 0x01
+    corrupt = base_nup.with_suffix(".flags.nup")
+    corrupt.write_bytes(data)
+    with pytest.raises(NupError):
+        read_container(str(corrupt))
