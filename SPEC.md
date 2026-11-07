@@ -176,6 +176,14 @@ Identity TLVs (name, icon, publisher, localized sets) live on the
 base record; in an update-only container (§5.2) there is no base
 record, so they sit on the update record instead.
 
+Display selection precedence: when both a default-language value
+(0x0004/0x0005/0x0006) and a localized record (0x0009/0x000A) carry
+the user's language, readers SHOULD present the exact-language
+localized value and fall back to the default for every other
+language - the default MUST NOT overwrite an exact match. Field by
+field: a missing localized entry falls back to the default one at a
+per-field, not per-container, level.
+
 The per-package **file table** takes over the CNMT's job: one whole-file
 SHA-256 per entry. Roughly 7 MB of meta.nup for a 75K-file base, same
 order as v1's TOC. This is what catches corruption past the 0x200 bytes
@@ -414,9 +422,14 @@ Packing that update dump alone emits one base container, display version
 
 ## 10. Open questions
 
-1. **Compression variant.** If sizes matter later: NSZ-style per-section
-   magic (`NCZ` precedent) as an optional entry codec, negotiated via a
-   meta TLV. Rejected for v2.0 to keep tools working.
+1. **Compression variant.** If sizes matter later: the candidate design
+   is `codec 3`, framing entries as runs of standard 1 MiB zstd frames
+   with a zstd-seekable-format skippable-frame index at the end of the
+   extent (concrete proposal with measurements in issue #31; raw
+   storage for entries over 256 MiB cost one Switch 2 title 3.96 GB).
+   All identity hashes stay over logical bytes, compressed entries
+   store `hashed size` 0, and the variant is gated by the §3 feature
+   flags. Rejected for v2.0 to keep tools working.
 2. **SHA-3-256 second hash.** Switch 14.0.0+ moved to SHA-3 upstream.
    Worth a meta TLV carrying an optional parallel hash?
 3. **Icon size cap.** The per-TLV length and the per-record `tlv size`
@@ -444,6 +457,14 @@ Packing that update dump alone emits one base container, display version
    normalize `0400...` -> `0100...` and derive patch/add-on ids from
    the application id (§4); raw ACI0 ids would not match emulator
    title libraries.
+9. **Block-level dedup.** v2 identity is per file; an update that
+   touches one huge file re-stores it whole (issue #9.3). Chunked
+   dedup needs an entry-extension design on top of the codec work;
+   deferred.
+10. **Multi-program titles.** A container holds one base scope, so a
+   title with several programs packs each as its own container keyed
+   by application id (issue #9.6). Whether the format should model
+   multi-program titles natively is open.
 
 ---
 

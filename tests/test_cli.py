@@ -6,6 +6,7 @@ import pytest
 
 from conftest import BASE_TITLE_ID
 from nup.cli import main as nup_main
+from nup.reader import read_container
 
 
 def test_info_json_matches_human_fields(base_nup, capsys):
@@ -79,3 +80,13 @@ def test_s52_default_naming_uses_standalone_update():
     assert default_name("x/updates/917504", "standalone", 917504, "MarioKartWorld") == (
         "MarioKartWorld.standalone.update.917504.nup"
     )
+
+
+def test_one_package_selector_semantics_for_every_command(base_nup, tmp_path):
+    """issue #26: --package means the same thing in verify and extract."""
+    from nup.verify import select_packages
+
+    with read_container(str(base_nup)) as reader:
+        assert select_packages(reader, "base")[0] is reader.meta.packages[0]
+        assert select_packages(reader, 0) == select_packages(reader, "base")
+        assert select_packages(reader, "all") == reader.meta.packages

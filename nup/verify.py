@@ -59,14 +59,31 @@ def verify_container(
 
 
 def select_packages(reader: NupReader, selector: str | int | None):
+    """One selector semantics for every --package flag (issue #26): a scope
+    label ('update/458752'), a kind name when unambiguous ('update'), or a
+    record index."""
     if selector is None or selector == "all":
         return list(reader.meta.packages)
     if isinstance(selector, int):
         return [reader.meta.packages[selector]]
     text = str(selector)
-    for record in reader.meta.packages:
-        if package_label(reader, record) == text:
-            return [record]
+    by_label = [
+        record for record in reader.meta.packages
+        if package_label(reader, record) == text
+    ]
+    if by_label:
+        return by_label
+    by_kind = [
+        record for record in reader.meta.packages
+        if record.kind.name.lower() == text.lower()
+    ]
+    if by_kind:
+        if len(by_kind) > 1:
+            raise NupError(
+                f"{text!r} matches {len(by_kind)} packages; use the scope "
+                "label or record index"
+            )
+        return by_kind
     if text.isdigit():
         return [reader.meta.packages[int(text)]]
     raise NupError(f"no package matches {selector!r}")

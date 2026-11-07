@@ -18,6 +18,7 @@ from .metarecord import parse_meta_record
 from .tree import validate_container_path
 
 READ_CHUNK = 4 << 20
+MAX_META_RECORD_SIZE = 1 << 31
 
 
 class NupReader:
@@ -48,6 +49,11 @@ class NupReader:
         header = self.handle.read(0x10)
         count, table_size = parse_container_counts(header)
         entries_end = 0x10 + 0x40 * count
+        if entries_end + table_size > self.file_size:
+            raise NupError(
+                f"declared entry table ({count} entries) and string table "
+                f"({table_size} bytes) exceed the {self.file_size}-byte container"
+            )
         prefix = memoryview(header + self.handle.read(entries_end - 0x10 + table_size))
         _count, self.entries, self.string_table = parse_container_prefix(prefix)
         self.entry_count = count
@@ -65,7 +71,13 @@ class NupReader:
             raise NupError("the first container entry is not meta.nup")
         for entry in self.entries[1:]:
             validate_container_path(entry.name)
-        self.meta_raw = self.read_entry_bytes(self.entries[0])
+        meta_entry = self.entries[0]
+        if meta_entry.size > MAX_META_RECORD_SIZE:
+            raise NupError(
+                f"meta record claims {meta_entry.size:,} bytes; nothing "
+                "legitimate comes near the sanity cap"
+            )
+        self.meta_raw = self.read_entry_bytes(meta_entry)
         self.meta: MetaRecord = parse_meta_record(memoryview(self.meta_raw))
         validate_scope_contiguity(self.meta.packages)
         validate_grouping(self.meta.packages)
